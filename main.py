@@ -6,6 +6,8 @@ import time
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
+import threading
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +20,7 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm'}
 MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500MB max upload size
-RTSP_HOST = '0.0.0.0'
+RTSP_HOST = 'localhost'
 RTSP_PORT = 8554
 
 # Create upload directory
@@ -27,6 +29,15 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # Global dictionary to track running/active streams
 active_streams = {}
+
+def start_mediamtx():
+    mediamtx_path = os.path.join(os.path.dirname(__file__), 'rtsp_server', 'mediamtx.exe')
+    
+    if os.path.isfile(mediamtx_path):
+        subprocess.Popen([mediamtx_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        logger.info("MediaMTX started.")
+    else:
+        logger.error("MediaMTX not found. Please check the path.")
 
 """ Helper Functions """
 def allowed_file(filename):
@@ -37,7 +48,6 @@ def start_rtsp_stream(stream_name, video_path):
     # Start RTSP stream using FFmpeg
     rtsp_url = f"rtsp://{RTSP_HOST}:{RTSP_PORT}/{stream_name}"
    
-
     # FFmpeg command for RTSP streaming with infinite loop
     ffmpeg_cmd = [
         'ffmpeg',
@@ -58,11 +68,12 @@ def start_rtsp_stream(stream_name, video_path):
         # Start FFmpeg process
         process = subprocess.Popen(
             ffmpeg_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True
+            #stdout=subprocess.PIPE,
+            #stderr=subprocess.PIPE,
+            #universal_newlines=True,
+            creationflags=subprocess.CREATE_NEW_CONSOLE
         )
-        
+                
         logger.info(f"RTSP stream started for '{stream_name}' at {rtsp_url}")
         return process, rtsp_url
         
@@ -79,6 +90,27 @@ def stop_existing_stream(stream_name):
             existing_process.terminate()
             logger.info(f"Stopped existing stream: {stream_name}")
 
+
+def start_stream_background(stream_name, video_path, filename):
+    def target():
+        process, rtsp_url = start_rtsp_stream(stream_name, video_path)
+        
+        if process and rtsp_url:
+            active_streams[stream_name] = {
+                'process': process,
+                'rtsp_url': rtsp_url,
+                'filename': filename,
+                'file_path': video_path,
+                'created_at': time.time(),
+                'stream_name': stream_name
+
+            }
+        else:
+            logger.error(f"Failed to start stream in the background for {stream_name}")
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    return thread
 
 
 @app.route('/', methods=['GET'])
@@ -156,20 +188,16 @@ def upload_video():
         logger.info(f"File saved: {file_path}")
         
         # Start RTSP stream
-        process, rtsp_url = start_rtsp_stream(stream_name, file_path)
-        
-        if not process or not rtsp_url:
-            return jsonify({'error': 'Failed to start RTSP stream'}), 500
-        
-        # Store stream information
-        active_streams[stream_name] = {
-            'process': process,
-            'rtsp_url': rtsp_url,
-            'filename': filename,
-            'file_path': file_path,
-            'created_at': time.time(),
-            'stream_name': stream_name
-        }
+        start_stream_background(stream_name, file_path, filename)
+
+        # Give it time to initialize (FFmpeg can take a second or two)
+        time.sleep(1)
+
+        stream_info = active_streams.get(stream_name)
+        if not stream_info:
+         return jsonify({'error': 'Failed to start RTSP stream'}), 500
+
+        rtsp_url = stream_info['rtsp_url']
         
         logger.info(f"Stream '{stream_name}' started successfully")
         
@@ -226,10 +254,11 @@ def get_status():
     return jsonify(status_data)
 
 if __name__ == '__main__':
+    start_mediamtx()
     logger.info(" Starting Multi-Stream RTSP Server...")
     logger.info(f" RTSP Server: rtsp://{RTSP_HOST}:{RTSP_PORT}/[stream_name]")
     logger.info(f" Web Interface: http://0.0.0.0:5000")
     logger.info(f" Upload Directory: {UPLOAD_FOLDER}/")
     logger.info("=" * 50)
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)
