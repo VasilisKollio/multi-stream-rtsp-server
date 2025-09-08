@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 import threading
+import requests
 
 
 # Configure logging
@@ -20,8 +21,14 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm'}
 MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500MB max upload size
-RTSP_HOST = 'localhost'
+
+##RTSP_HOST = 'localhost'
+##RTSP_PORT = 8554
+
+# MediaMTX settings - now points to Docker container
+RTSP_HOST = 'localhost'  # Docker container accessible on localhost
 RTSP_PORT = 8554
+MEDIAMTX_API_PORT = 9997
 
 # Create upload directory
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -30,14 +37,53 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 # Global dictionary to track running/active streams
 active_streams = {}
 
-def start_mediamtx():
-    mediamtx_path = os.path.join(os.path.dirname(__file__), 'rtsp_server', 'mediamtx.exe')
+def check_mediamtx_running(): ##
+    """Check if MediaMTX Docker container is running and accessible"""
+    try:
+        # Try to access MediaMTX API
+        response = requests.get(f'http://{RTSP_HOST}:{MEDIAMTX_API_PORT}/v3/config/global/get', timeout=3)
+        if response.status_code == 200:
+            logger.info("MediaMTX Docker container is running and accessible")
+            return True
+    except requests.exceptions.RequestException:
+        pass
     
-    if os.path.isfile(mediamtx_path):
-        subprocess.Popen([mediamtx_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
-        logger.info("MediaMTX started.")
+    # Fallback: try to connect to RTSP port
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        result = sock.connect_ex((RTSP_HOST, RTSP_PORT))
+        sock.close()
+        if result == 0:
+            logger.info("MediaMTX RTSP port is accessible")
+            return True
+    except Exception:
+        pass
+    
+    logger.warning("MediaMTX not accessible. Make sure Docker container is running.")
+    return False
+
+def start_mediamtx():
+    """Check MediaMTX status instead of starting local executable"""
+    if check_mediamtx_running():
+        logger.info("MediaMTX Docker container is already running")
+        return True
     else:
-        logger.error("MediaMTX not found. Please check the path.")
+        logger.error("MediaMTX Docker container is not running!")
+        logger.error("Please start it with: docker-compose up -d")
+        return False ##
+    
+
+##def start_mediamtx():
+##    mediamtx_path = os.path.join(os.path.dirname(__file__), 'rtsp_server', 'mediamtx.exe')
+    
+##    if os.path.isfile(mediamtx_path):
+##        subprocess.Popen([mediamtx_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+##        logger.info("MediaMTX started.")
+##    else:
+##        logger.error("MediaMTX not found. Please check the path.")
+
 
 """ Helper Functions """
 def allowed_file(filename):
@@ -61,6 +107,7 @@ def start_rtsp_stream(stream_name, video_path):
         '-c:a', 'aac',                  # Audio codec
         '-b:a', '128k',                 # Audio bitrate
         '-f', 'rtsp',                   # Output format RTSP
+        '-rtsp_transport', 'tcp',       ## Use TCP for reliability with Docker ##
         rtsp_url                        # RTSP output URL
     ]
     
@@ -116,7 +163,8 @@ def start_stream_background(stream_name, video_path, filename):
 @app.route('/', methods=['GET'])
 def landing_page():
     # Landing page - returns JSON with instructions and active streams
-    
+    mediamtx_status = "running" if check_mediamtx_running() else "not accessible" ##
+
     # Get current status of all streams
     active_stream_list = []
     for stream_name, stream_info in active_streams.items():
@@ -134,11 +182,13 @@ def landing_page():
     
     return jsonify({
         'message': 'Multi-Stream RTSP Server',
+        'mediamtx_status': mediamtx_status,
         'instructions': {
             'upload': 'POST /upload with multipart form: file (video) + stream_name (string)',
             'status': 'GET /status for all active streams',
             'supported_formats': list(ALLOWED_EXTENSIONS),
-            'rtsp_access': f'rtsp://{RTSP_HOST}:{RTSP_PORT}/[stream_name]'
+            'rtsp_access': f'rtsp://{RTSP_HOST}:{RTSP_PORT}/[stream_name]',##
+            'docker_note': 'MediaMTX runs in Docker container'
         },
         'active_streams': active_stream_list,
         'total_active_streams': len(active_stream_list)
@@ -147,7 +197,13 @@ def landing_page():
 @app.route('/upload', methods=['POST'])
 def upload_video():
     # Upload video and start RTSP stream
-    
+
+    ## Check if MediaMTX is accessible ##
+    if not check_mediamtx_running():
+        return jsonify({
+            'error': 'MediaMTX server not accessible. Please start Docker container with: docker-compose up -d'
+        }), 503
+       
     # Check if file is present
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
@@ -190,7 +246,7 @@ def upload_video():
         # Start RTSP stream
         start_stream_background(stream_name, file_path, filename)
 
-        # Give it time to initialize (FFmpeg can take a second or two)
+        # Give it time to initialize 
         time.sleep(1)
 
         stream_info = active_streams.get(stream_name)
@@ -215,9 +271,14 @@ def upload_video():
 @app.route('/status', methods=['GET'])
 def get_status():
     # Check active streams and return JSON with all active streams and process status
-    
+    mediamtx_accessible = check_mediamtx_running()
+
+
     status_data = {
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
+        'mediamtx_accessible': mediamtx_accessible,
+        'mediamtx_host': RTSP_HOST,
+        'mediamtx_port': RTSP_PORT,
         'total_streams': len(active_streams),
         'rtsp_server': f'rtsp://{RTSP_HOST}:{RTSP_PORT}',
         'streams': {}
@@ -253,12 +314,41 @@ def get_status():
     
     return jsonify(status_data)
 
+##if __name__ == '__main__':
+##    start_mediamtx()
+##    logger.info(" Starting Multi-Stream RTSP Server...")
+##    logger.info(f" RTSP Server: rtsp://{RTSP_HOST}:{RTSP_PORT}/[stream_name]")
+##    logger.info(f" Web Interface: http://0.0.0.0:5000")
+##    logger.info(f" Upload Directory: {UPLOAD_FOLDER}/")
+##    logger.info("=" * 50)
+##    
+##    app.run(debug=False, host='0.0.0.0', port=5000)
+
+@app.route('/mediamtx/health', methods=['GET'])
+def mediamtx_health():
+    """Check MediaMTX Docker container health"""
+    is_running = check_mediamtx_running()
+    return jsonify({
+        'mediamtx_accessible': is_running,
+        'timestamp': time.time(),
+        'rtsp_endpoint': f'rtsp://{RTSP_HOST}:{RTSP_PORT}',
+        'api_endpoint': f'http://{RTSP_HOST}:{MEDIAMTX_API_PORT}'
+    })
+
 if __name__ == '__main__':
-    start_mediamtx()
-    logger.info(" Starting Multi-Stream RTSP Server...")
-    logger.info(f" RTSP Server: rtsp://{RTSP_HOST}:{RTSP_PORT}/[stream_name]")
-    logger.info(f" Web Interface: http://0.0.0.0:5000")
-    logger.info(f" Upload Directory: {UPLOAD_FOLDER}/")
-    logger.info("=" * 50)
+    logger.info("Starting Multi-Stream RTSP Server with Docker MediaMTX...")
+    logger.info("=" * 60)
+    logger.info("IMPORTANT: Make sure MediaMTX Docker container is running!")
+    logger.info("Start with: docker-compose up -d")
+    logger.info("=" * 60)
+    
+    # Check MediaMTX status on startup
+    if start_mediamtx():
+        logger.info(f"RTSP Server: rtsp://{RTSP_HOST}:{RTSP_PORT}/[stream_name]")
+        logger.info(f"Web Interface: http://0.0.0.0:5000")
+        logger.info(f"Upload Directory: {UPLOAD_FOLDER}/")
+        logger.info("=" * 50)
+    else:
+        logger.error("MediaMTX not accessible! Streams may fail.")
     
     app.run(debug=False, host='0.0.0.0', port=5000)

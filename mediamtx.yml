@@ -1,5 +1,56 @@
-# mediamtx.yml
-paths:
-  all:
-    source: publisher
+# MediaMTX v1.14.0 Configuration (Updated syntax)
+logLevel: info
+logDestinations: [stdout]
+
+# API for monitoring
+api: yes
+apiAddress: 0.0.0.0:9997
+
+# RTSP settings (updated syntax)
+rtsp: yes
+rtspAddress: 0.0.0.0:8554
+rtspsAddress: 0.0.0.0:8322
+rtspTransports: [tcp, udp]  # Replaced 'protocols'
+rtpAddress: 0.0.0.0:8000
+rtcpAddress: 0.0.0.0:8001
+
+# RTMP settings (updated syntax)
+rtmp: yes  
+rtmpAddress: 0.0.0.0:1935
+
+# HLS settings (updated syntax)
+hls: yes  
+hlsAddress: 0.0.0.0:8888
+hlsAllowOrigin: "*"
+
+# WebRTC settings
+webrtc: yes
+webrtcAddress: 0.0.0.0:8889
+webrtcAllowOrigin: "*"
+
+# Global path defaults (no authentication)
+pathDefaults:
+  source: publisher
+  sourceOnDemand: no
   
+  # Disable all authentication
+  publishUser: ""
+  publishPass: ""
+  publishIPs: []
+  readUser: ""
+  readPass: ""
+  readIPs: []
+
+# Path settings - allow any stream without authentication
+paths:
+  # Accept any stream name - no auth required
+  "~^.*$":
+    source: publisher
+    
+    # Explicitly disable authentication for all paths
+    publishUser: ""
+    publishPass: ""
+    publishIPs: []
+    readUser: ""
+    readPass: ""
+    readIPs: []

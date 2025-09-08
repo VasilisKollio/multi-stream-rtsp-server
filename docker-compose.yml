@@ -1,0 +1,20 @@
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx-server
+    ports:
+      - "8554:8554"     # RTSP port (main streaming port)
+      - "1935:1935"     # RTMP port (optional)
+      - "8888:8888"     # HLS port (optional for web streaming)
+      - "9997:9997"     # API port (for monitoring)
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro  # Custom config file
+    restart: unless-stopped
+    environment:
+      - MTX_PROTOCOLS=tcp
+    networks:
+      - streaming-network
+
+networks:
+  streaming-network:
+    driver: bridge

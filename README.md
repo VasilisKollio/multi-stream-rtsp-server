@@ -58,6 +58,7 @@ The application successfully handles file uploads and manages FFmpeg processes, 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
+pip install streamlit
 pip install -r requirements.txt
 ```
 
@@ -108,3 +109,51 @@ This will return a JSON overview including:
 - Process IDs
 - Uptime
 - Associated video file
+
+# Latest Progress 8/9
+## Docker Container
+ I migrated from the local executable to a containerized MediaMTX server using Docker in order to have cross-platform access and easier deployment. Created `docker-compose.yml` with the official MediaMTX image. Created `mediamtx.yml` to disable authentication and configure protocols. Modified `main.py` to connect to the Docker container instead of local executable.
+
+```bash
+# Start MediaMTX in Docker (required first!)
+docker-compose up -d
+
+# Verify container is running
+docker ps
+
+# Install requirements
+
+# Run the Flask server 
+python main.py
+
+# Install Streamlit
+pip install streamlit
+
+# Run the web interface
+streamlit run ui.py
+
+# RUN THE NEW UI 
+streamlit run ui_test.py
+```
+## New UI
+I modified the UI of the project creating a new file called `ui_test.py`. It's core features are listed below:
+
+#### Upload & Streaming
+- Drag & drop video file upload
+- Support for MP4, AVI, MOV, MKV, WMV, FLV, WEBM formats
+- Stream name input with validation
+- Start stream with one button click
+- Display RTSP URL for copying
+
+#### Stream Monitoring
+- View all active streams in real-time
+- Show stream status (running/stopped)
+- Display stream details: filename, uptime, process ID
+- Refresh streams manually
+- Copy RTSP URLs easily
+
+#### Server Status
+- Check Flask server connection
+- Monitor MediaMTX Docker container health
+- View server information and API endpoints
+- Direct link to Flask status page in browser
