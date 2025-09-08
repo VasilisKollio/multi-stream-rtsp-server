@@ -54,7 +54,7 @@ The application successfully handles file uploads and manages FFmpeg processes, 
 
 # How to Run
 
-## Setup
+## Setup - In the project's directory
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
